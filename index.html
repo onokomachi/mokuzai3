@@ -1,0 +1,378 @@
+﻿<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>木材棚シミュレーター</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/TransformControls.js"></script>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: 'Hiragino Kaku Gothic ProN', 'メイリオ', sans-serif; background-color: #f0f4f8; }
+    #canvas-container { position: relative; width: 100%; height: 70vh; background-color: #e2e8f0; border-radius: 8px; overflow: hidden; }
+    .control-panel { background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+    .btn { transition: all 0.2s; }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); }
+    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.5); display: flex; justify-content: center; align-items: center; z-index: 50; visibility: hidden; opacity: 0; transition: all 0.3s; }
+    .modal-overlay.active { visibility: visible; opacity: 1; }
+    .modal-content, .full-modal-content { background-color: white; padding: 2rem; border-radius: 0.5rem; width: 90%; max-width: 500px; transform: translateY(-20px); transition: all 0.3s; }
+    .full-modal-content { max-width: 1200px; height: 90%; overflow-y: auto; }
+    .modal-overlay.active .modal-content, .modal-overlay.active .full-modal-content { transform: translateY(0); }
+    .wood-diagram { position: relative; background-color: #f3e5ab; border: 1px solid #d2b48c; border-radius: 4px; margin-bottom: 30px; }
+    .wood-diagram-part { position: absolute; background-color: rgba(210, 180, 140, 0.7); border: 1px dashed #8b4513; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #333; overflow: hidden; white-space: nowrap; cursor: pointer; }
+    .wood-diagram-part:hover { background-color: rgba(210, 180, 140, 0.9); }
+    .wood-diagram-part.selected { background-color: rgba(59, 130, 246, 0.5); border: 2px solid #2563eb; }
+  </style>
+</head>
+<body>
+  <!-- HTMLの構造は変更なし -->
+  <div class="container mx-auto px-4 py-6"><h1 class="text-3xl font-bold text-center mb-2 text-indigo-800">木材棚シミュレーター</h1><p class="text-center mb-6 text-gray-600">材料を動かして棚の組み立てをシミュレーションできます</p><div class="grid grid-cols-1 lg:grid-cols-4 gap-6"><div class="lg:col-span-3"><div id="canvas-container" class="mb-4"></div><div class="control-panel p-4 mb-4"><div class="flex flex-wrap gap-3"><button id="reset-view" class="btn bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md">視点をリセット</button><button id="show-help" class="btn bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md">操作方法</button><button id="undo" class="btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md">元に戻す</button><button id="reset-all" class="btn bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-md">リセット</button><button id="show-wood-diagram" class="btn bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-md">木取り図</button></div></div></div><div class="lg:col-span-1"><div id="right-panel" class="control-panel p-4 mb-4"><h2 class="text-xl font-bold mb-3 text-indigo-700">選択中の部品</h2><div id="selected-part-info" class="text-gray-700 mb-4">選択されていません</div><div id="transform-ui" class="hidden"><h3 class="font-bold text-gray-700 mb-2 mt-4">位置調整 (10mm)</h3><div class="grid grid-cols-3 gap-2 mb-4"><button data-axis="x" data-dir="1" class="btn bg-red-100 hover:bg-red-200 px-2 py-1 rounded">X +</button><button data-axis="y" data-dir="1" class="btn bg-green-100 hover:bg-green-200 px-2 py-1 rounded">Y +</button><button data-axis="z" data-dir="1" class="btn bg-blue-100 hover:bg-blue-200 px-2 py-1 rounded">Z +</button><button data-axis="x" data-dir="-1" class="btn bg-red-100 hover:bg-red-200 px-2 py-1 rounded">X -</button><button data-axis="y" data-dir="-1" class="btn bg-green-100 hover:bg-green-200 px-2 py-1 rounded">Y -</button><button data-axis="z" data-dir="-1" class="btn bg-blue-100 hover:bg-blue-200 px-2 py-1 rounded">Z -</button></div><h3 class="font-bold text-gray-700 mb-2">回転 (90度)</h3><div class="grid grid-cols-3 gap-2"><button data-rot="x" class="btn bg-purple-100 hover:bg-purple-200 px-2 py-1 rounded">X軸</button><button data-rot="y" class="btn bg-purple-100 hover:bg-purple-200 px-2 py-1 rounded">Y軸</button><button data-rot="z" class="btn bg-purple-100 hover:bg-purple-200 px-2 py-1 rounded">Z軸</button></div></div><div id="cut-controls" class="hidden"><hr class="my-4"><h3 class="font-bold text-gray-700 mb-2">カット設定</h3><div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">カット方向</label><div class="flex gap-2"><button id="cut-width" class="btn bg-red-100 hover:bg-red-200 px-3 py-1 rounded flex-1 active">幅方向</button><button id="cut-depth" class="btn bg-blue-100 hover:bg-blue-200 px-3 py-1 rounded flex-1">奥行方向</button></div></div><div class="mb-3"><label class="block text-sm font-medium text-gray-700 mb-1">カット位置 (<span id="cut-value">0</span>mm)</label><input type="range" id="cut-slider" min="10" max="500" value="0" class="w-full"></div><button id="apply-cut" class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md w-full mb-3">カットを適用</button><button id="cancel-cut" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md w-full">キャンセル</button></div></div></div></div></div>
+  <div id="help-modal" class="modal-overlay"></div>
+  <div id="wood-diagram-modal" class="modal-overlay"></div>
+
+<script>
+(function() {
+    'use strict';
+    let scene, camera, renderer, controls, transformControls, allMeshes = {}, selectedObject = null, woodLayouts = {}, history = [], cutPreviewMesh, diagramSelectedNodeId = null;
+    const MAX_HISTORY = 20, CUT_GAP = 5, MOVE_STEP = 10, ROTATE_STEP = Math.PI / 2;
+    const materials = {
+      A: { width: 505, height: 12, depth: 160, count: 2, color: 0xd2b48c, name: "板材A" },
+      B: { width: 552, height: 12, depth: 40, count: 2, color: 0xdeb887, name: "板材B" }
+    };
+
+    function init() {
+      setupScene();
+      const savedData = localStorage.getItem('woodShelfSimulatorData');
+      if (savedData) {
+        try {
+          restoreFromState(JSON.parse(savedData));
+        } catch (e) {
+          console.error("データ復元エラー:", e);
+          createInitialLayouts();
+        }
+      } else {
+        createInitialLayouts();
+      }
+      setupEventListeners();
+      animate();
+      history.length = 0;
+      saveHistoryState();
+    }
+
+    function setupScene() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xf0f4f8);
+      const container = document.getElementById('canvas-container');
+      camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 5000);
+      camera.position.set(0, 300, 800);
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer.domElement);
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      transformControls = new THREE.TransformControls(camera, renderer.domElement);
+      transformControls.addEventListener('dragging-changed', e => { controls.enabled = !e.value; });
+      transformControls.addEventListener('mouseUp', () => saveHistoryState());
+      scene.add(transformControls);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(200, 500, 300);
+      scene.add(directionalLight);
+      scene.add(new THREE.GridHelper(1000, 20));
+      cutPreviewMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.5, depthTest: false }));
+      cutPreviewMesh.renderOrder = 1;
+      cutPreviewMesh.visible = false;
+      scene.add(cutPreviewMesh);
+    }
+
+    function createInitialLayouts() {
+      woodLayouts = {}; allMeshes = {}; let partCounter = 0; const startZ = -300, spacingZ = 200;
+      ['A', 'B'].forEach(type => {
+        for (let i = 0; i < materials[type].count; i++) {
+          const mat = materials[type], partId = `part_${partCounter++}`, woodName = `${mat.name}-${i + 1}`;
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(mat.width, mat.height, mat.depth), new THREE.MeshStandardMaterial({ color: mat.color }));
+          mesh.name = woodName; mesh.userData.partId = partId; mesh.position.set(0, 0, startZ + (Object.keys(woodLayouts).length) * spacingZ);
+          scene.add(mesh); allMeshes[partId] = mesh;
+          woodLayouts[partId] = { id: partId, woodName, originalDimensions: { ...mat }, meshId: partId, isActive: true, bounds: { x: 0, y: 0, width: mat.width, depth: mat.depth }, dimensions: { width: mat.width, height: mat.height, depth: mat.depth }, children: [] };
+        }
+      });
+    }
+
+    function restoreFromState(state) {
+        deselectObject();
+        Object.values(allMeshes).forEach(mesh => scene.remove(mesh));
+        allMeshes = {};
+        woodLayouts = state.layouts;
+
+        function recreateMeshes(node, rootNode) {
+            if (node.meshId && state.positions[node.id] && state.quaternions[node.id]) {
+                const d = node.dimensions;
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(d.width, d.height, d.depth), new THREE.MeshStandardMaterial({ color: rootNode.originalDimensions.color }));
+                mesh.name = `部品-${node.id}`; mesh.userData.partId = node.id;
+                const pos = state.positions[node.id], quat = state.quaternions[node.id];
+                mesh.position.set(pos.x, pos.y, pos.z);
+                mesh.quaternion.set(quat._x, quat._y, quat._z, quat._w);
+                mesh.visible = node.isActive;
+                scene.add(mesh); allMeshes[node.id] = mesh;
+            }
+            node.children.forEach(child => recreateMeshes(child, rootNode));
+        }
+        for (const rootId in woodLayouts) recreateMeshes(woodLayouts[rootId], woodLayouts[rootId]);
+    }
+    
+    function findNodeAndParent(partId, startNode = null) {
+      if (!startNode) {
+        for (const rootId in woodLayouts) {
+          const result = findNodeAndParent(partId, woodLayouts[rootId]);
+          if (result.node) { result.rootNode = woodLayouts[rootId]; return result; }
+        }
+        return { node: null, parentNode: null, rootNode: null };
+      }
+      if (startNode.id === partId) return { node: startNode, parentNode: null };
+      for (const child of startNode.children) {
+        if (child.id === partId) return { node: child, parentNode: startNode };
+        const found = findNodeAndParent(partId, child);
+        if (found.node) return found;
+      }
+      return { node: null, parentNode: null };
+    }
+
+    function applyCut() {
+      if (!selectedObject) return;
+      saveHistoryState();
+      const { node, rootNode } = findNodeAndParent(selectedObject.userData.partId);
+      if (!node) return;
+      const cutValue = parseInt(document.getElementById('cut-slider').value), cutDirection = document.querySelector('#cut-width').classList.contains('active') ? 'width' : 'depth';
+      node.isActive = false; allMeshes[node.meshId].visible = false; transformControls.detach();
+      const d = node.dimensions, b = node.bounds;
+      const child1 = { id: `part_${Object.keys(allMeshes).length + Date.now()}`, isActive: true, children: [], dimensions: {}, bounds: {} };
+      const child2 = { id: `part_${Object.keys(allMeshes).length + Date.now() + 1}`, isActive: true, children: [], dimensions: {}, bounds: {} };
+      if (cutDirection === 'width') {
+        child1.dimensions = { width: cutValue, height: d.height, depth: d.depth }; child1.bounds = { x: b.x, y: b.y, width: cutValue, depth: b.depth };
+        child2.dimensions = { width: d.width - cutValue, height: d.height, depth: d.depth }; child2.bounds = { x: b.x + cutValue, y: b.y, width: d.width - cutValue, depth: b.depth };
+        var posOffset1 = new THREE.Vector3(-(d.width - child1.dimensions.width) / 2 - CUT_GAP / 2, 0, 0), posOffset2 = new THREE.Vector3((d.width - child2.dimensions.width) / 2 + CUT_GAP / 2, 0, 0);
+      } else {
+        child1.dimensions = { width: d.width, height: d.height, depth: cutValue }; child1.bounds = { x: b.x, y: b.y, width: b.width, depth: cutValue };
+        child2.dimensions = { width: d.width, height: d.height, depth: d.depth - cutValue }; child2.bounds = { x: b.x, y: b.y + cutValue, width: b.width, depth: d.depth - cutValue };
+        var posOffset1 = new THREE.Vector3(0, 0, -(d.depth - child1.dimensions.depth) / 2 - CUT_GAP / 2), posOffset2 = new THREE.Vector3(0, 0, (d.depth - child2.dimensions.depth) / 2 + CUT_GAP / 2);
+      }
+      const mesh1 = createMeshForNode(child1, rootNode.originalDimensions), mesh2 = createMeshForNode(child2, rootNode.originalDimensions);
+      posOffset1.applyQuaternion(selectedObject.quaternion); posOffset2.applyQuaternion(selectedObject.quaternion);
+      mesh1.position.copy(selectedObject.position).add(posOffset1); mesh2.position.copy(selectedObject.position).add(posOffset2);
+      mesh1.quaternion.copy(selectedObject.quaternion); mesh2.quaternion.copy(selectedObject.quaternion);
+      node.children.push(child1, child2);
+      deselectObject();
+    }
+
+    function createMeshForNode(node, originalDim) {
+      const d = node.dimensions;
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(d.width, d.height, d.depth), new THREE.MeshStandardMaterial({ color: originalDim.color }));
+      mesh.name = `部品-${node.id}`; mesh.userData.partId = node.id;
+      scene.add(mesh); allMeshes[node.id] = mesh; node.meshId = node.id;
+      return mesh;
+    }
+
+    function selectObject(object) {
+      if (selectedObject === object) return;
+      deselectObject();
+      selectedObject = object; selectedObject.material.emissive.setHex(0x555555);
+      transformControls.attach(selectedObject);
+      document.getElementById('transform-ui').classList.remove('hidden');
+      document.getElementById('cut-controls').classList.remove('hidden');
+      updateSelectedPartInfo(); updateCutSliderRange();
+    }
+
+    function deselectObject() {
+      if (selectedObject) selectedObject.material.emissive.setHex(0x000000);
+      selectedObject = null; transformControls.detach();
+      document.getElementById('transform-ui').classList.add('hidden');
+      document.getElementById('cut-controls').classList.add('hidden');
+      document.getElementById('selected-part-info').innerHTML = '選択されていません';
+      if (cutPreviewMesh) cutPreviewMesh.visible = false;
+    }
+
+    function updateSelectedPartInfo() {
+      if (!selectedObject) return;
+      const { node } = findNodeAndParent(selectedObject.userData.partId);
+      if (!node) return;
+      const d = node.dimensions;
+      document.getElementById('selected-part-info').innerHTML = `<div class="font-bold text-indigo-600">${node.woodName || selectedObject.name}</div><div>寸法: ${Math.round(d.width)} x ${Math.round(d.height)} x ${Math.round(d.depth)} mm</div>`;
+    }
+
+    function updateCutSliderRange() {
+      if (!selectedObject) return;
+      const { node } = findNodeAndParent(selectedObject.userData.partId);
+      if (!node) return;
+      const slider = document.getElementById('cut-slider'), cutDirection = document.querySelector('#cut-width').classList.contains('active') ? 'width' : 'depth', dim = node.dimensions[cutDirection];
+      slider.min = 10; slider.max = dim > 20 ? dim - 10 : 10; slider.value = Math.round(dim / 2);
+      document.getElementById('cut-value').textContent = slider.value;
+      updateCutPreview();
+    }
+
+    function updateCutPreview() {
+      if (!selectedObject) { if(cutPreviewMesh) cutPreviewMesh.visible = false; return; }
+      const { node } = findNodeAndParent(selectedObject.userData.partId);
+      if (!node) return;
+      const cutValue = parseInt(document.getElementById('cut-slider').value), cutDirection = document.querySelector('#cut-width').classList.contains('active') ? 'width' : 'depth', dims = node.dimensions;
+      cutPreviewMesh.quaternion.copy(selectedObject.quaternion);
+      if (cutDirection === 'width') {
+        cutPreviewMesh.scale.set(1, dims.height * 1.1, dims.depth * 1.1);
+        cutPreviewMesh.position.copy(selectedObject.position).add(new THREE.Vector3(cutValue - dims.width / 2, 0, 0).applyQuaternion(selectedObject.quaternion));
+      } else {
+        cutPreviewMesh.scale.set(dims.width * 1.1, dims.height * 1.1, 1);
+        cutPreviewMesh.position.copy(selectedObject.position).add(new THREE.Vector3(0, 0, cutValue - dims.depth / 2).applyQuaternion(selectedObject.quaternion));
+      }
+      cutPreviewMesh.visible = true;
+    }
+
+    function generateWoodDiagrams() {
+        const container = document.getElementById('wood-diagrams-container'); container.innerHTML = ''; diagramSelectedNodeId = null;
+        document.getElementById('diagram-cut-controls').classList.add('hidden');
+        for (const rootId in woodLayouts) {
+            const rootNode = woodLayouts[rootId], originalDim = rootNode.originalDimensions;
+            const diagramContainer = document.createElement('div'); diagramContainer.innerHTML = `<h4 class="text-lg font-bold mb-2 text-indigo-700">${rootNode.woodName}</h4>`;
+            const woodDiagram = document.createElement('div'); woodDiagram.classList.add('wood-diagram');
+            const maxWidth = container.clientWidth > 800 ? 800 : container.clientWidth - 40, scale = maxWidth / originalDim.width;
+            woodDiagram.style.width = `${originalDim.width * scale}px`; woodDiagram.style.height = `${originalDim.depth * scale}px`;
+            const previewLine = document.createElement('div'); previewLine.id = `diagram-preview-${rootId}`;
+            previewLine.style.cssText = 'position: absolute; background-color: rgba(255, 0, 0, 0.7); display: none; pointer-events: none;';
+            woodDiagram.appendChild(previewLine);
+            drawPartRecursive(rootNode, woodDiagram, scale);
+            diagramContainer.appendChild(woodDiagram); container.appendChild(diagramContainer);
+        }
+    }
+
+    function drawPartRecursive(node, container, scale) {
+      if (node.isActive) {
+        const partDiv = document.createElement('div'); partDiv.className = 'wood-diagram-part';
+        partDiv.style.left = `${node.bounds.x * scale}px`; partDiv.style.top = `${node.bounds.y * scale}px`;
+        partDiv.style.width = `${node.bounds.width * scale}px`; partDiv.style.height = `${node.bounds.depth * scale}px`;
+        partDiv.textContent = `${Math.round(node.dimensions.width)}x${Math.round(node.dimensions.depth)}`;
+        partDiv.dataset.nodeId = node.id;
+        partDiv.addEventListener('click', (e) => { e.stopPropagation(); handleDiagramPartSelect(node, partDiv); });
+        container.appendChild(partDiv);
+      }
+      node.children.forEach(child => drawPartRecursive(child, container, scale));
+    }
+    
+    function handleDiagramPartSelect(node, partDiv) {
+      document.querySelectorAll('.wood-diagram-part.selected').forEach(el => el.classList.remove('selected'));
+      partDiv.classList.add('selected'); diagramSelectedNodeId = node.id;
+      document.getElementById('diagram-cut-controls').classList.remove('hidden');
+      document.getElementById('diagram-selected-part-name').textContent = `部品 ${node.id.split('_')[1]} をカット`;
+      updateDiagramCutSliderRange();
+    }
+    
+    function updateDiagramCutSliderRange() {
+      if (!diagramSelectedNodeId) return;
+      const { node } = findNodeAndParent(diagramSelectedNodeId), cutDir = document.querySelector('#diagram-cut-width').classList.contains('active') ? 'width' : 'depth', dim = node.dimensions[cutDir];
+      const slider = document.getElementById('diagram-cut-slider');
+      slider.min = 10; slider.max = dim > 20 ? dim - 10 : 10; slider.value = Math.round(dim / 2);
+      document.getElementById('diagram-cut-value').textContent = slider.value;
+      updateDiagramCutPreview();
+    }
+
+    function updateDiagramCutPreview() {
+      if (!diagramSelectedNodeId) return;
+      const { node, rootNode } = findNodeAndParent(diagramSelectedNodeId), container = document.getElementById('wood-diagrams-container');
+      const scale = (container.clientWidth > 800 ? 800 : container.clientWidth - 40) / rootNode.originalDimensions.width;
+      const previewLine = document.getElementById(`diagram-preview-${rootNode.id}`), sliderVal = parseInt(document.getElementById('diagram-cut-slider').value);
+      const cutDir = document.querySelector('#diagram-cut-width').classList.contains('active') ? 'width' : 'depth';
+      previewLine.style.display = 'block';
+      if (cutDir === 'width') {
+        previewLine.style.left = `${(node.bounds.x + sliderVal) * scale}px`; previewLine.style.top = `${node.bounds.y * scale}px`;
+        previewLine.style.width = '2px'; previewLine.style.height = `${node.bounds.depth * scale}px`;
+      } else {
+        previewLine.style.left = `${node.bounds.x * scale}px`; previewLine.style.top = `${(node.bounds.y + sliderVal) * scale}px`;
+        previewLine.style.height = '2px'; previewLine.style.width = `${node.bounds.width * scale}px`;
+      }
+    }
+
+    function applyCutFromDiagram() {
+      if (!diagramSelectedNodeId) return;
+      const mesh = allMeshes[diagramSelectedNodeId]; selectObject(mesh);
+      const diagramCutDirIsWidth = document.querySelector('#diagram-cut-width').classList.contains('active');
+      document.getElementById(diagramCutDirIsWidth ? 'cut-width' : 'cut-depth').click();
+      const mainSlider = document.getElementById('cut-slider');
+      mainSlider.value = document.getElementById('diagram-cut-slider').value;
+      document.getElementById('cut-value').textContent = mainSlider.value;
+      applyCut();
+      document.getElementById('wood-diagram-modal').classList.remove('active');
+    }
+
+    function resetAll() {
+      localStorage.removeItem('woodShelfSimulatorData');
+      deselectObject(); Object.values(allMeshes).forEach(mesh => scene.remove(mesh));
+      createInitialLayouts(); history.length = 0; saveHistoryState();
+    }
+
+    function saveHistoryState() {
+      const state = { layouts: woodLayouts, positions: {}, quaternions: {} };
+      for (const id in allMeshes) {
+        if (allMeshes[id]) {
+            state.positions[id] = allMeshes[id].position.clone();
+            state.quaternions[id] = allMeshes[id].quaternion.clone();
+        }
+      }
+      history.push(state);
+      if (history.length > MAX_HISTORY) history.shift();
+      try { localStorage.setItem('woodShelfSimulatorData', JSON.stringify(state)); } catch (e) { console.error("データ保存エラー:", e); }
+    }
+    
+    function undo() {
+        if (history.length <= 1) return;
+        history.pop();
+        const prevState = history[history.length - 1];
+        restoreFromState(prevState);
+        try { localStorage.setItem('woodShelfSimulatorData', JSON.stringify(prevState)); } catch (e) { console.error("Undo後データ保存エラー:", e); }
+    }
+
+    function setupEventListeners() {
+      const raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
+      renderer.domElement.addEventListener('click', (event) => {
+        if (transformControls.dragging) return;
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1; mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(Object.values(allMeshes).filter(m => m.visible));
+        selectObject(intersects.length > 0 ? intersects[0].object : null);
+      });
+      document.getElementById('reset-view').addEventListener('click', () => { camera.position.set(0, 300, 800); controls.target.set(0, 0, 0); });
+      document.getElementById('show-help').addEventListener('click', () => document.getElementById('help-modal').classList.add('active'));
+      document.getElementById('help-close').addEventListener('click', () => document.getElementById('help-modal').classList.remove('active'));
+      document.getElementById('reset-all').addEventListener('click', resetAll);
+      document.getElementById('undo').addEventListener('click', undo);
+      document.getElementById('show-wood-diagram').addEventListener('click', () => { generateWoodDiagrams(); document.getElementById('wood-diagram-modal').classList.add('active'); });
+      document.getElementById('wood-diagram-close').addEventListener('click', () => document.getElementById('wood-diagram-modal').classList.remove('active'));
+      document.getElementById('cut-width').addEventListener('click', (e) => { e.target.classList.add('active'); document.getElementById('cut-depth').classList.remove('active'); if(selectedObject) updateCutSliderRange(); });
+      document.getElementById('cut-depth').addEventListener('click', (e) => { e.target.classList.add('active'); document.getElementById('cut-width').classList.remove('active'); if(selectedObject) updateCutSliderRange(); });
+      document.getElementById('cut-slider').addEventListener('input', e => { document.getElementById('cut-value').textContent = e.target.value; updateCutPreview(); });
+      document.getElementById('apply-cut').addEventListener('click', applyCut);
+      document.getElementById('cancel-cut').addEventListener('click', deselectObject);
+      document.getElementById('diagram-cut-width').addEventListener('click', e => { e.target.classList.add('active'); document.getElementById('diagram-cut-depth').classList.remove('active'); updateDiagramCutSliderRange(); });
+      document.getElementById('diagram-cut-depth').addEventListener('click', e => { e.target.classList.add('active'); document.getElementById('diagram-cut-width').classList.remove('active'); updateDiagramCutSliderRange(); });
+      document.getElementById('diagram-cut-slider').addEventListener('input', e => { document.getElementById('diagram-cut-value').textContent = e.target.value; updateDiagramCutPreview(); });
+      document.getElementById('diagram-apply-cut').addEventListener('click', applyCutFromDiagram);
+      document.getElementById('diagram-cancel-cut').addEventListener('click', () => {
+        document.getElementById('diagram-cut-controls').classList.add('hidden');
+        document.querySelectorAll('.wood-diagram-part.selected').forEach(el => el.classList.remove('selected'));
+        document.querySelectorAll('[id^=diagram-preview-]').forEach(el => el.style.display = 'none');
+        diagramSelectedNodeId = null;
+      });
+      document.querySelectorAll('#transform-ui button[data-axis]').forEach(button => button.addEventListener('click', () => { if (!selectedObject) return; selectedObject.position[button.dataset.axis] += parseInt(button.dataset.dir) * MOVE_STEP; saveHistoryState(); }));
+      document.querySelectorAll('#transform-ui button[data-rot]').forEach(button => button.addEventListener('click', () => { if (!selectedObject) return; selectedObject.rotation[button.dataset.rot] += ROTATE_STEP; saveHistoryState(); }));
+    }
+    
+    function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+    
+    document.addEventListener('DOMContentLoaded', () => {
+        const helpModal = document.getElementById('help-modal');
+        if (helpModal && !helpModal.innerHTML) helpModal.innerHTML = `<div class="modal-content"><h3 class="text-xl font-bold mb-4 text-indigo-700">操作方法</h3><ul class="text-gray-700 space-y-3 mb-6"><li><span class="font-medium text-indigo-600 w-24 inline-block">視点回転:</span> マウス左ドラッグ</li><li><span class="font-medium text-indigo-600 w-24 inline-block">視点移動:</span> マウス右ドラッグ</li><li><span class="font-medium text-indigo-600 w-24 inline-block">ズーム:</span> スクロール</li><li><span class="font-medium text-indigo-600 w-24 inline-block">部品選択:</span> 部品をクリック</li><li><span class="font-medium text-indigo-600 w-24 inline-block">部品移動:</span> 選択後、矢印をドラッグ</li></ul><button id="help-close" class="btn bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md">閉じる</button></div>`;
+        const diagramModal = document.getElementById('wood-diagram-modal');
+        if (diagramModal && !diagramModal.innerHTML) diagramModal.innerHTML = `<div class="full-modal-content"><div class="flex justify-between items-center mb-4"><h3 class="text-2xl font-bold text-indigo-700">木取り図</h3><button id="wood-diagram-close" class="btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-md">閉じる</button></div><div id="diagram-cut-controls" class="p-4 bg-gray-100 rounded-lg mb-4 hidden"><h4 id="diagram-selected-part-name" class="font-bold mb-2"></h4><div class="grid grid-cols-1 md:grid-cols-2 gap-4"><div><label class="block text-sm font-medium text-gray-700 mb-1">カット方向</label><div class="flex gap-2"><button id="diagram-cut-width" class="btn bg-red-100 hover:bg-red-200 px-3 py-1 rounded flex-1 active">幅</button><button id="diagram-cut-depth" class="btn bg-blue-100 hover:bg-blue-200 px-3 py-1 rounded flex-1">奥行</button></div></div><div><label class="block text-sm font-medium text-gray-700 mb-1">カット位置 (<span id="diagram-cut-value">0</span>mm)</label><input type="range" id="diagram-cut-slider" min="10" max="500" value="0" class="w-full"></div></div><div class="mt-4 flex gap-3"><button id="diagram-apply-cut" class="btn bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md">このカットを適用</button><button id="diagram-cancel-cut" class="btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-md">キャンセル</button></div></div><div id="wood-diagrams-container" class="space-y-8"></div></div>`;
+        init();
+    });
+})();
+</script>
+</body>
+</html>
